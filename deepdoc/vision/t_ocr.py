@@ -1,16 +1,3 @@
-# Copyright 2025 The InfiniFlow Authors. All Rights Reserved.
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import os
 import sys
 sys.path.insert(
@@ -32,36 +19,89 @@ import asyncio
 from PIL import Image
 import io
 from pathlib import Path
+import ssl
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' #2 gpus, uncontinuous
-os.environ['CUDA_VISIBLE_DEVICES'] = '0' #1 gpu
-# os.environ['CUDA_VISIBLE_DEVICES'] = '' #cpu
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0' #1 gpu
+os.environ['CUDA_VISIBLE_DEVICES'] = '' #cpu
 
-async def check_endpoint_availability(host, port):
+# Create a context for asyncio to run in trio
+class TrioAsyncioContext:
+    def __init__(self):
+        self.loop = None
+
+    async def __aenter__(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        return self.loop
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.loop.close()
+        asyncio.set_event_loop(None)
+
+async def check_endpoint_availability(host, port, trio_token=None):
     """Check if the vision API endpoint is available."""
-    url = f"http://{host}:{port}/vision/health" if port else f"http://{host}/vision/health"  # Assuming there's a health endpoint
+    url = f"{host}:{port}/vision/health" if port else f"{host}/vision/health"
+    
+    # Fix URL format if needed
+    if not url.startswith(('http://', 'https://')):
+        url = f"https://{url}" if 'ngrok' in url else f"http://{url}"
+    
+    print(f"Checking endpoint at: {url}")
+    
+    async with TrioAsyncioContext() as loop:
+        result = await trio.to_thread.run_sync(
+            lambda _: asyncio.run(async_check_endpoint(url)), 
+            trio_token
+        )
+        return result
+
+async def async_check_endpoint(url):
+    """Run in asyncio context to check endpoint."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=2) as response:
-                return response.status == 200
-    except (aiohttp.ClientError, asyncio.TimeoutError):
+        # Create a ClientSession with SSL verification disabled
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            print(f"Checking endpoint: {url}")
+            async with session.get(url, timeout=10) as response:
+                status = response.status
+                print(f"Endpoint response: status={status}")
+                return status == 200
+    except Exception as e:
+        print(f"Error checking endpoint: {repr(e)}")
         return False
 
-async def process_with_endpoint(img_path, query, host, port):
+async def process_with_endpoint(img_path, query, host, port, trio_token=None):
     """Process the image using the remote vision API endpoint."""
-    url = f"http://{host}:{port}/vision/vision" if port else f"http://{host}/vision/vision"
+    url = f"{host}:{port}/vision/vision" if port else f"{host}/vision/vision"
     
+    # Fix URL format if needed
+    if not url.startswith(('http://', 'https://')):
+        url = f"https://{url}" if 'ngrok' in url else f"http://{url}"
+    
+    async with TrioAsyncioContext() as loop:
+        result = await trio.to_thread.run_sync(
+            lambda _: asyncio.run(async_process_endpoint(url, img_path, query)), 
+            trio_token
+        )
+        return result
+
+async def async_process_endpoint(url, img_path, query):
+    """Run in asyncio context to process with endpoint."""
     # Open and prepare the image file
-    with open(img_path, 'rb') as img_file:
-        form_data = aiohttp.FormData()
-        form_data.add_field('file', 
-                           img_file, 
-                           filename=os.path.basename(img_path),
-                           content_type='image/jpeg')  # Adjust content type if needed
-        form_data.add_field('query', query)
+    try:
+        # Create a ClientSession with SSL verification disabled
+        connector = aiohttp.TCPConnector(ssl=False)
         
-        try:
-            async with aiohttp.ClientSession() as session:
+        with open(img_path, 'rb') as img_file:
+            form_data = aiohttp.FormData()
+            form_data.add_field('file', 
+                              img_file, 
+                              filename=os.path.basename(img_path),
+                              content_type='image/jpeg')  # Adjust content type if needed
+            form_data.add_field('query', query)
+            
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(url, data=form_data) as response:
                     if response.status == 200:
                         result = await response.json()
@@ -70,9 +110,9 @@ async def process_with_endpoint(img_path, query, host, port):
                         error_text = await response.text()
                         print(f"Error from vision API: {response.status} - {error_text}")
                         return None
-        except Exception as e:
-            print(f"Error connecting to vision API: {str(e)}")
-            return None
+    except Exception as e:
+        print(f"Error connecting to vision API: {str(e)}")
+        return None
 
 def main(args):
     import torch.cuda
@@ -104,9 +144,9 @@ def main(args):
                 print(f"Task {i} use device {id}")
                 await trio.to_thread.run_sync(lambda: __ocr(i, id, img))
         else:
-            __ocr(i, id, img)
+            await trio.to_thread.run_sync(lambda: __ocr(i, id, img))
     
-    async def __process_with_api(i, img_path, img):
+    async def __process_with_api(i, img_path, img, trio_token):
         try:
             print(f"Task {i} start with Vision API")
             # Save the image temporarily if it's not already a file
@@ -120,17 +160,13 @@ def main(args):
                 img_path, 
                 args.vision_query,
                 args.endpoint_host,
-                args.endpoint_port
+                args.endpoint_port,
+                trio_token
             )
             
             if result and "result" in result:
                 # Assuming the API returns OCR results in a format we can parse
-                # You may need to adjust this based on your API's actual response format
                 text_content = result["result"]
-                
-                # Save the original image with annotations if available
-                img = draw_box(images[i], [], ["ocr"], 1.)  # No boxes from API
-                img.save(outputs[i], quality=95)
                 
                 # Save the extracted text to a file
                 with open(outputs[i] + ".txt", "w+", encoding='utf-8') as f:
@@ -154,27 +190,64 @@ def main(args):
                     pass
     
     async def __ocr_launcher():
+        # Create a trio token for thread sync
+        trio_token = trio.lowlevel.current_trio_token()
+        
         # Check if the endpoint is available if endpoint options are provided
         use_endpoint = False
-        if args.endpoint_host and args.endpoint_port:
-            use_endpoint = await check_endpoint_availability(args.endpoint_host, args.endpoint_port)
+        if args.endpoint_host:
+            print(f"Checking Vision API endpoint...")
+            use_endpoint = await check_endpoint_availability(args.endpoint_host, args.endpoint_port, trio_token)
             if use_endpoint:
-                print(f"Vision API endpoint is available at {args.endpoint_host}:{args.endpoint_port}")
+                print(f"Vision API endpoint is available at {args.endpoint_host}:{args.endpoint_port if args.endpoint_port else ''}")
             else:
                 print(f"Vision API endpoint is not available, falling back to local OCR")
         
-        if use_endpoint:
-            # Process using the Vision API
+        # If --use_both flag is provided, process both methods
+        if args.use_both and use_endpoint:
+            print("Using both Vision API and local OCR as requested")
+            
+            for i, img in enumerate(images):
+                # Process with Vision API
+                img_path = args.inputs if len(images) == 1 else None
+                if isinstance(img_path, str) and os.path.isfile(img_path):
+                    # Vision API processing
+                    api_success = await __process_with_api(i, img_path, img, trio_token)
+                    
+                    # Store API results in a separate location
+                    if api_success:
+                        # Save with a different name to differentiate from local OCR
+                        api_output = outputs[i].replace('.jpg', '_api.jpg')
+                        api_txt = outputs[i].replace('.jpg', '_api.txt') 
+                        try:
+                            import shutil
+                            shutil.copy(outputs[i], api_output)
+                            shutil.copy(outputs[i] + ".txt", api_txt)
+                            print(f"Saved Vision API results for task {i} to {api_output}")
+                        except Exception as e:
+                            print(f"Error saving API results: {str(e)}")
+                
+                # Always process with local OCR when --use_both is specified
+                if cuda_devices > 1:
+                    await __ocr_thread(i, i % cuda_devices, img, limiter[i % cuda_devices])
+                else:
+                    await __ocr_thread(i, 0, img)
+        
+        elif use_endpoint:
+            # Process using only the Vision API (with fallback to local OCR on failure)
             for i, img in enumerate(images):
                 img_path = args.inputs if len(images) == 1 else None
-                success = await __process_with_api(i, img_path, img)
-                if not success:
-                    # Fall back to local OCR if API processing fails
-                    if cuda_devices > 1:
-                        async with limiter[i % cuda_devices]:
-                            await trio.to_thread.run_sync(lambda: __ocr(i, i % cuda_devices, img))
-                    else:
-                        await trio.to_thread.run_sync(lambda: __ocr(i, 0, img))
+                if isinstance(img_path, str) and os.path.isfile(img_path):
+                    success = await __process_with_api(i, img_path, img, trio_token)
+                    if not success:
+                        # Fall back to local OCR if API processing fails
+                        if cuda_devices > 1:
+                            await __ocr_thread(i, i % cuda_devices, img, limiter[i % cuda_devices])
+                        else:
+                            await __ocr_thread(i, 0, img)
+                else:
+                    print(f"Image path is not a valid file: {img_path}")
+                    await __ocr_thread(i, 0, img)
         else:
             # Use local OCR processing
             if cuda_devices > 1:
@@ -202,6 +275,7 @@ if __name__ == "__main__":
     parser.add_argument('--endpoint_port', help="Port for the Vision API endpoint. Default: 8000",
                         default=None)
     parser.add_argument('--use_api', help="Force using the Vision API (if available)", action="store_true")
+    parser.add_argument('--use_both', help="Use both Vision API and local OCR", action="store_true")
     parser.add_argument('--vision_query', help="Query to send to the Vision API. Default is to extract all text.",
                         default="OCR")
     args = parser.parse_args()
