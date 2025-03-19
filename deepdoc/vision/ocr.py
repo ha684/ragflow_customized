@@ -708,6 +708,7 @@ class OCR:
         if self.gemini:
             response = self.gemini_inference(img, "Xử lý hình ảnh này theo hướng dẫn đã cung cấp.")
             full_text = self.parse_api_response(response.text)
+            print(full_text)
         
         if img is None:
             return None, None, time_dict
