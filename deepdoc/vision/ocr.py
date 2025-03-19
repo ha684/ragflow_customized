@@ -563,12 +563,16 @@ class OCR:
         if not api_key:
             with open("api_key.txt", "r") as f:
                 api_key = f.read().strip()
-        genai.configure(api_key=api_key)
-        self.gemini = genai.GenerativeModel(
-            kwargs.get("model_name", "gemini-2.0-flash"),
-            safety_settings=SAFETY_SETTINGS,
-            system_instruction=kwargs.get("system_prompt", system_prompt)
-        )
+        try:
+            genai.configure(api_key=api_key)
+            self.gemini = genai.GenerativeModel(
+                kwargs.get("model_name", "gemini-2.0-flash"),
+                safety_settings=SAFETY_SETTINGS,
+                system_instruction=kwargs.get("system_prompt", system_prompt)
+            )
+        except Exception as e:
+            logging.error(f"Failed to initialize Gemini: {e}")
+            self.gemini = None
         
         self.drop_score = 0.5
         self.crop_image_res_index = 0
