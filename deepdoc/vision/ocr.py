@@ -700,7 +700,7 @@ class OCR:
             raise
 
     def gemini_inference(self, img, prompt):
-        response = self.gemini.generate_content([img, prompt])
+        response = self.gemini.generate_content([Image.fromarray(img), prompt])
         return response
 
     def __call__(self, img, device_id = 0, cls=True):
