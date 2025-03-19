@@ -563,7 +563,7 @@ class OCR:
         if not api_key:
             with open("api_key.txt", "r") as f:
                 api_key = f.read().strip()
-        print("API Key:", api_key)
+
         try:
             genai.configure(api_key=api_key)
             self.gemini = genai.GenerativeModel(
