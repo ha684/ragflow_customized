@@ -30,6 +30,11 @@ import numpy as np
 import cv2
 import onnxruntime as ort
 
+import google.generativeai as genai
+from .prompt import system_prompt, SAFETY_SETTINGS
+import re
+import json
+
 from .postprocess import build_post_process
 
 loaded_models = {}
@@ -508,9 +513,8 @@ class TextDetector:
 
         return dt_boxes, time.time() - st
 
-
 class OCR:
-    def __init__(self, model_dir=None):
+    def __init__(self, model_dir=None, **kwargs):
         """
         If you have trouble downloading HuggingFace models, -_^ this might help!!
 
@@ -554,7 +558,18 @@ class OCR:
                 else:
                     self.text_detector = [TextDetector(model_dir, 0)]
                     self.text_recognizer = [TextRecognizer(model_dir, 0)]
-
+                    
+        api_key = kwargs.get("api_key",None)
+        if not api_key:
+            with open("api_key.txt", "r") as f:
+                api_key = f.read().strip()
+        genai.configure(api_key=api_key)
+        self.gemini = genai.GenerativeModel(
+            kwargs.get("model_name", "gemini-2.0-flash"),
+            safety_settings=SAFETY_SETTINGS,
+            system_instruction=kwargs.get("system_prompt", system_prompt)
+        )
+        
         self.drop_score = 0.5
         self.crop_image_res_index = 0
 
@@ -634,7 +649,7 @@ class OCR:
             return None, None, time_dict
 
         return zip(self.sorted_boxes(dt_boxes), [
-                   ("", 0) for _ in range(len(dt_boxes))])
+                ("", 0) for _ in range(len(dt_boxes))])
 
     def recognize(self, ori_im, box, device_id: int | None = None):
         if device_id is None:
@@ -660,11 +675,40 @@ class OCR:
             texts.append(text)
         return texts
 
+    def parse_api_response(self, response_text: str) -> str:
+        json_str = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+        
+        try:
+            parsed_data = json.loads(json_str)
+            
+            if 'text' not in parsed_data:
+                logging.error("Missing 'text' field in parsed JSON")
+                raise KeyError("Response JSON is missing required 'text' field")
+                
+            return parsed_data['text']
+            
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON after removing markdown: {e}")
+            logging.error(f"Processed response text: {json_str}")
+            raise
+        except Exception as e:
+            logging.error(f"Unexpected error while parsing response: {e}")
+            raise
+
+    def gemini_inference(self, img, prompt):
+        response = self.gemini.generate_content([img, prompt])
+        return response
+
     def __call__(self, img, device_id = 0, cls=True):
         time_dict = {'det': 0, 'rec': 0, 'cls': 0, 'all': 0}
         if device_id is None:
             device_id = 0
-
+            
+        full_text = None
+        if self.gemini:
+            response = self.gemini_inference(img, "Xử lý hình ảnh này theo hướng dẫn đã cung cấp.")
+            full_text = self.parse_api_response(response.text)
+        
         if img is None:
             return None, None, time_dict
 
@@ -702,5 +746,5 @@ class OCR:
 
         # for bno in range(len(img_crop_list)):
         #    print(f"{bno}, {rec_res[bno]}")
-
-        return list(zip([a.tolist() for a in filter_boxes], filter_rec_res))
+        result = list(zip([a.tolist() for a in filter_boxes], filter_rec_res))
+        return full_text, result

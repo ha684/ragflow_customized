@@ -45,7 +45,7 @@ def main(args):
 
     def __ocr(i, id, img):
         print("Task {} start".format(i))
-        bxs = ocr(np.array(img), id)
+        full_text, bxs = ocr(np.array(img), id)
         bxs = [(line[0], line[1][0]) for line in bxs]
         bxs = [{
             "text": t,
@@ -55,7 +55,7 @@ def main(args):
         img = draw_box(images[i], bxs, ["ocr"], 1.)
         img.save(outputs[i], quality=95)
         with open(outputs[i] + ".txt", "w+", encoding='utf-8') as f:
-            f.write("\n".join([o["text"] for o in bxs]))
+            f.write(full_text)
 
         print("Task {} done".format(i))
 
