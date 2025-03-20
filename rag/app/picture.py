@@ -34,8 +34,12 @@ def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
         "docnm_kwd": filename,
         "image": img
     }
-    bxs = ocr(np.array(img))
-    txt = "\n".join([t[0] for _, t in bxs if t[0]])
+    full_text, bxs = ocr(np.array(img))
+    txt = ""
+    if full_text:
+        txt = full_text
+    else:
+        txt = "\n".join([t[0] for _, t in bxs if t[0]])
     eng = lang.lower() == "english"
     callback(0.4, "Finish OCR: (%s ...)" % txt[:12])
     if (eng and len(txt.split()) > 32) or len(txt) > 32:

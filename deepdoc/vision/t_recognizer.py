@@ -59,7 +59,7 @@ def main(args):
 
 
 def get_table_html(img, tb_cpns, ocr):
-    boxes = ocr(np.array(img))
+    _, boxes = ocr(np.array(img))
     boxes = LayoutRecognizer.sort_Y_firstly(
         [{"x0": b[0][0], "x1": b[1][0],
           "top": b[0][1], "text": t[0],
