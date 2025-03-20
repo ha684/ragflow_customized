@@ -563,6 +563,7 @@ class OCR:
         if not api_key:
             with open("api_key.txt", "r") as f:
                 api_key = f.read().strip()
+
         try:
             genai.configure(api_key=api_key)
             self.gemini = genai.GenerativeModel(
@@ -570,6 +571,7 @@ class OCR:
                 safety_settings=SAFETY_SETTINGS,
                 system_instruction=kwargs.get("system_prompt", system_prompt)
             )
+            logging.info("Succesfully initilized gemini")
         except Exception as e:
             logging.error(f"Failed to initialize Gemini: {e}")
             self.gemini = None
@@ -694,10 +696,10 @@ class OCR:
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse JSON after removing markdown: {e}")
             logging.error(f"Processed response text: {json_str}")
-            raise
+            return None
         except Exception as e:
             logging.error(f"Unexpected error while parsing response: {e}")
-            raise
+            return None
 
     def gemini_inference(self, img, prompt):
         response = self.gemini.generate_content([Image.fromarray(img), prompt])
