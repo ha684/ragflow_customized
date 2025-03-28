@@ -199,7 +199,7 @@ COPY agent agent
 COPY graphrag graphrag
 COPY agentic_reasoning agentic_reasoning
 COPY pyproject.toml uv.lock ./
-
+COPY api_key.txt api_key.txt
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 RUN chmod +x ./entrypoint*.sh

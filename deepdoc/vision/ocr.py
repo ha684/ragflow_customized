@@ -560,11 +560,11 @@ class OCR:
                     self.text_recognizer = [TextRecognizer(model_dir, 0)]
                     
         api_key = kwargs.get("api_key",None)
-        if not api_key:
-            with open("api_key.txt", "r") as f:
-                api_key = f.read().strip()
 
         try:
+            if not api_key:
+                with open("api_key.txt", "r") as f:
+                    api_key = f.read().strip()
             genai.configure(api_key=api_key)
             self.gemini = genai.GenerativeModel(
                 kwargs.get("model_name", "gemini-2.0-flash"),
