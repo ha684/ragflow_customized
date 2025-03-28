@@ -35,11 +35,19 @@ def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
         "image": img
     }
     full_text, bxs = ocr(np.array(img))
+    print("\nfull_text:\n",full_text)
+    print("\nbxs:\n",bxs)
     txt = ""
     if full_text:
         txt = full_text
     else:
-        txt = "\n".join([t[0] for _, t in bxs if t[0]])
+        bxs = [(line[0], line[1][0]) for line in bxs]
+        bxs = [{
+            "text": t,
+            "bbox": [b[0][0], b[0][1], b[1][0], b[-1][1]],
+            "type": "ocr",
+            "score": 1} for b, t in bxs if b[0][0] <= b[1][0] and b[0][1] <= b[-1][1]]
+        txt = "\n".join([o["text"] for o in bxs])
     eng = lang.lower() == "english"
     callback(0.4, "Finish OCR: (%s ...)" % txt[:12])
     if (eng and len(txt.split()) > 32) or len(txt) > 32:
